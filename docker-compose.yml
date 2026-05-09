@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # ChromaDB vector store — powers the RAG similar-incident retrieval
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: hacksys-chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - ALLOW_RESET=true
+    restart: unless-stopped
+
+  # Node.js monitoring backend
+  incident-backend:
+    build:
+      context: ./incident-backend
+      dockerfile: Dockerfile
+    container_name: hacksys-backend
+    ports:
+      - "3001:3001"
+    depends_on:
+      - chromadb
+    env_file:
+      - ./incident-backend/.env
+    environment:
+      - CHROMA_URL=http://chromadb:8000
+      - NODE_ENV=production
+    volumes:
+      - sqlite_data:/app/data
+    restart: unless-stopped
+
+  # Next.js dashboard frontend
+  incident-dashboard:
+    build:
+      context: ./incident-dashboard
+      dockerfile: Dockerfile
+    container_name: hacksys-dashboard
+    ports:
+      - "3000:3000"
+    depends_on:
+      - incident-backend
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
+      - NEXT_PUBLIC_WS_URL=http://localhost:3001
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
+  sqlite_data:

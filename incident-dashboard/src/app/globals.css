@@ -1,0 +1,149 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Google Fonts ──────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ─── CSS Custom Properties ─────────────────────────────────────────────────── */
+:root {
+  --bg-base:     #0a0d14;
+  --bg-card:     #111827;
+  --bg-elevated: #1a2035;
+  --border:      #1f2937;
+  --primary:     #6366f1;
+  --primary-glow:#6366f140;
+  --text-1:      #f1f5f9;
+  --text-2:      #94a3b8;
+  --text-3:      #475569;
+  --critical:    #ef4444;
+  --high:        #f97316;
+  --medium:      #f59e0b;
+  --low:         #22c55e;
+}
+
+/* ─── Base reset ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-base);
+  color: var(--text-1);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Custom scrollbar ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: var(--bg-base); }
+::-webkit-scrollbar-thumb  { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #374151; }
+
+/* ─── Utility classes ────────────────────────────────────────────────────────── */
+@layer components {
+  .card {
+    @apply bg-[#111827] border border-[#1f2937] rounded-xl;
+  }
+
+  .card-elevated {
+    @apply bg-[#1a2035] border border-[#1f2937] rounded-xl;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600
+           hover:bg-indigo-500 text-white text-sm font-medium transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-lg
+           hover:bg-white/5 text-slate-400 hover:text-slate-200
+           text-sm font-medium transition-colors;
+  }
+
+  /* Pulsing status dot */
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full;
+  }
+
+  .status-dot-pulse {
+    @apply status-dot animate-pulse;
+  }
+
+  /* Code/log text */
+  .log-text {
+    @apply font-mono text-xs text-slate-300 leading-relaxed;
+  }
+
+  /* Section heading */
+  .section-title {
+    @apply text-sm font-semibold text-slate-400 uppercase tracking-widest;
+  }
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────────── */
+@keyframes slideInDown {
+  from { transform: translateY(-12px); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(12px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes scanline {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+.animate-slide-in-down  { animation: slideInDown  0.3s ease-out; }
+.animate-slide-in-right { animation: slideInRight 0.3s ease-out; }
+.animate-fade-in        { animation: fadeIn       0.4s ease-out; }
+
+/* Incident row hover shimmer */
+.incident-row {
+  position: relative;
+  transition: background-color 0.15s ease;
+}
+.incident-row:hover {
+  background-color: #1a2035;
+}
+
+/* Glow effect on critical badges */
+.glow-critical {
+  box-shadow: 0 0 8px #ef444440;
+}
+.glow-primary {
+  box-shadow: 0 0 12px var(--primary-glow);
+}
+
+/* Terminal-style text block */
+.terminal {
+  @apply font-mono text-xs leading-relaxed bg-black/40
+         border border-[#1f2937] rounded-lg p-4 overflow-x-auto;
+}
+
+/* Grid background for hero areas */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(99,102,241,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
