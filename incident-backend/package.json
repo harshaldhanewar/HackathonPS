@@ -9,7 +9,7 @@
     "setup-db": "node src/config/database.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
+    "@anthropic-ai/sdk": "^0.95.1",
     "@libsql/client": "^0.17.3",
     "axios": "^1.6.7",
     "chromadb": "^1.7.3",

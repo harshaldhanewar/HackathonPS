@@ -54,7 +54,7 @@ async function main() {
 
   // ─── 4. API routes ──────────────────────────────────────────────────────────
   app.use('/api/logs',       require('./src/routes/logs'));
-  app.use('/api/incidents',  require('./src/routes/incidents'));
+  app.use('/api/incidents',  require('./src/routes/incidents')(io));
   app.use('/api/rca',        require('./src/routes/rca'));
   app.use('/api/automation', require('./src/routes/automation'));
 

@@ -1,6 +1,8 @@
 const express = require('express');
-const router  = express.Router();
 const db      = require('../config/database');
+
+module.exports = function createIncidentRouter(io) {
+const router = express.Router();
 
 // GET /api/incidents
 router.get('/', async (req, res) => {
@@ -116,11 +118,12 @@ router.post('/:id/reanalyze', async (req, res) => {
       [incident.trace_id || '']
     );
 
-    generateRCA(incident, logs).catch(console.error);
+    generateRCA(incident, logs, io).catch(console.error);
     res.json({ success: true, message: 'RCA analysis queued' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-module.exports = router;
+return router;
+};
