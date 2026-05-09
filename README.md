@@ -1,5 +1,4 @@
 # HackathonPS: Production-Like Unstable Backend
-#hello harshal
 An intentionally unstable Java Spring Boot backend system designed for AI debugging hackathons. This system provides realistic business APIs with natural production-like bugs, enabling participants to build AI systems that analyze logs, detect failures, identify root causes, and suggest fixes.
 
 ---
