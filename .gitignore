@@ -22,5 +22,5 @@ bin/
 dependency-reduced-pom.xml
 HELP.md
 .DS_Store
-incident-dashboard\node_modules/
+incident-dashboard/node_modules/
 incident-backend/node_modules/
