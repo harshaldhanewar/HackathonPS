@@ -43,6 +43,7 @@ public class OrderController {
         try {
             String userId = (String) body.get("userId");
             @SuppressWarnings("unchecked")
+
             List<Map<String, Object>> rawItems = (List<Map<String, Object>>) body.get("items");
 
             if (rawItems == null) {
