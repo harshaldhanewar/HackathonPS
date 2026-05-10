@@ -1,10 +1,252 @@
 /**
- * Automation Service — Phase 6 implementation
- * Stub so routes can require() this without crashing.
+ * Automation Service — Phase 6
+ *
+ * Supported actions:
+ *  CREATE_GITHUB_ISSUE / GITHUB_ISSUE  — opens a GitHub issue with full RCA body
+ *  SEND_SLACK_ALERT   / SLACK_ALERT    — posts a Block Kit message to a Slack webhook
+ *  Everything else                     — logged and recorded as SIMULATED
+ *
+ * Each action is tracked in automation_actions (PENDING → SUCCESS | FAILED).
+ * If io is provided, emits automation_done after each action completes.
  */
 
-async function triggerAction(incidentId, actionType) {
-  throw new Error('Automation Service not yet implemented — coming in Phase 6');
+const axios  = require('axios');
+const { v4: uuidv4 } = require('uuid');
+const logger = require('../utils/logger');
+const env    = require('../config/env');
+const db     = require('../config/database');
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
+
+async function triggerAction(incidentId, actionType, inputData = {}, io = null) {
+  const action_id = uuidv4();
+
+  await db.run(
+    `INSERT INTO automation_actions
+       (action_id, incident_id, action_type, status, input_data)
+     VALUES (?, ?, ?, 'PENDING', ?)`,
+    [action_id, incidentId, actionType, JSON.stringify(inputData)]
+  );
+
+  logger.info(`[Automation] ▶ ${actionType} for ${incidentId} (${action_id})`);
+
+  try {
+    const result = await dispatch(actionType, incidentId, inputData);
+
+    await db.run(
+      `UPDATE automation_actions
+       SET status = 'SUCCESS', result_data = ?, completed_at = CURRENT_TIMESTAMP
+       WHERE action_id = ?`,
+      [JSON.stringify(result), action_id]
+    );
+
+    logger.info(`[Automation] ✅ ${actionType} succeeded for ${incidentId}`);
+
+    if (io) {
+      const action = await db.get(
+        'SELECT * FROM automation_actions WHERE action_id = ?', [action_id]
+      );
+      io.emit('automation_done', { incident_id: incidentId, action });
+    }
+
+    return { action_id, actionType, result };
+
+  } catch (err) {
+    await db.run(
+      `UPDATE automation_actions
+       SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+       WHERE action_id = ?`,
+      [err.message, action_id]
+    );
+
+    logger.error(`[Automation] ❌ ${actionType} failed for ${incidentId}: ${err.message}`);
+
+    if (io) {
+      const action = await db.get(
+        'SELECT * FROM automation_actions WHERE action_id = ?', [action_id]
+      );
+      io.emit('automation_done', { incident_id: incidentId, action });
+    }
+
+    throw err;
+  }
+}
+
+// ─── Dispatcher ───────────────────────────────────────────────────────────────
+
+function dispatch(actionType, incidentId, inputData) {
+  const t = actionType.toUpperCase();
+  if (t === 'CREATE_GITHUB_ISSUE' || t === 'GITHUB_ISSUE') {
+    return createGitHubIssue(incidentId, inputData);
+  }
+  if (t === 'SEND_SLACK_ALERT' || t === 'SLACK_ALERT') {
+    return sendSlackAlert(incidentId, inputData);
+  }
+  return simulateAction(actionType, incidentId, inputData);
+}
+
+// ─── GitHub Issue ─────────────────────────────────────────────────────────────
+
+async function createGitHubIssue(incidentId, inputData) {
+  if (!env.GITHUB_TOKEN || !env.GITHUB_REPO) {
+    return { simulated: true, reason: 'GITHUB_TOKEN or GITHUB_REPO not configured' };
+  }
+
+  const [incident, rca] = await Promise.all([
+    db.get('SELECT * FROM incidents WHERE incident_id = ?', [incidentId]),
+    db.get(
+      'SELECT * FROM rca_reports WHERE incident_id = ? ORDER BY generated_at DESC LIMIT 1',
+      [incidentId]
+    ),
+  ]);
+
+  if (!incident) throw new Error(`Incident ${incidentId} not found`);
+
+  const remSteps    = safeParseArray(rca?.remediation_steps);
+  const components  = safeParseArray(rca?.affected_components);
+  const severityEmoji = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🟢' }[incident.severity] || '⚪';
+
+  const title = `${severityEmoji} [${incident.severity}] ${incident.title} — ${incidentId}`;
+
+  const body = [
+    `## Incident Report`,
+    ``,
+    `| Field | Value |`,
+    `|---|---|`,
+    `| **ID** | \`${incidentId}\` |`,
+    `| **Type** | ${incident.type} |`,
+    `| **Severity** | ${incident.severity} |`,
+    `| **Status** | ${incident.status} |`,
+    `| **First Seen** | ${incident.first_seen} |`,
+    `| **Log Count** | ${incident.log_count} |`,
+    ``,
+    rca ? `## Root Cause\n${rca.root_cause}` : '## Root Cause\n*RCA not yet available*',
+    ``,
+    rca ? `## Impact\n${rca.impact_summary}` : '',
+    ``,
+    remSteps.length > 0
+      ? `## Remediation Steps\n${remSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
+      : '',
+    ``,
+    components.length > 0
+      ? `## Affected Components\n${components.map(c => `- ${c}`).join('\n')}`
+      : '',
+    ``,
+    rca ? `## Pattern\n\`${rca.pattern}\`` : '',
+    ``,
+    `---`,
+    `*Generated by [HackSys AI](http://localhost:3000) | Confidence: ${rca ? Math.round(rca.confidence_score * 100) : '?'}%*`,
+  ].filter(l => l !== null).join('\n');
+
+  const labels = ['incident', incident.severity.toLowerCase(), incident.type.toLowerCase().replace(/_/g, '-')];
+
+  const response = await axios.post(
+    `https://api.github.com/repos/${env.GITHUB_REPO}/issues`,
+    { title, body, labels },
+    {
+      headers: {
+        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+      timeout: 15_000,
+    }
+  );
+
+  return {
+    issue_url:    response.data.html_url,
+    issue_number: response.data.number,
+  };
+}
+
+// ─── Slack Alert ──────────────────────────────────────────────────────────────
+
+async function sendSlackAlert(incidentId, inputData) {
+  if (!env.SLACK_WEBHOOK_URL) {
+    return { simulated: true, reason: 'SLACK_WEBHOOK_URL not configured' };
+  }
+
+  const [incident, rca] = await Promise.all([
+    db.get('SELECT * FROM incidents WHERE incident_id = ?', [incidentId]),
+    db.get(
+      'SELECT * FROM rca_reports WHERE incident_id = ? ORDER BY generated_at DESC LIMIT 1',
+      [incidentId]
+    ),
+  ]);
+
+  if (!incident) throw new Error(`Incident ${incidentId} not found`);
+
+  const severityEmoji = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🟢' }[incident.severity] || '⚪';
+  const remSteps = safeParseArray(rca?.remediation_steps).slice(0, 3);
+
+  const blocks = [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: `${severityEmoji} ${incident.severity}: ${incident.title}`,
+      },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Incident ID:*\n\`${incidentId}\`` },
+        { type: 'mrkdwn', text: `*Type:*\n${incident.type}` },
+        { type: 'mrkdwn', text: `*Severity:*\n${incident.severity}` },
+        { type: 'mrkdwn', text: `*Status:*\n${incident.status}` },
+      ],
+    },
+    { type: 'divider' },
+    rca
+      ? {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*Root Cause:*\n${rca.root_cause}`,
+          },
+        }
+      : {
+          type: 'section',
+          text: { type: 'mrkdwn', text: '*Root Cause:*\n_RCA not yet available_' },
+        },
+    remSteps.length > 0
+      ? {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*Top Remediation Steps:*\n${remSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`,
+          },
+        }
+      : null,
+    {
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: `Generated by *HackSys AI* | ${rca ? `Confidence: ${Math.round(rca.confidence_score * 100)}%` : 'RCA pending'} | ${new Date().toISOString()}`,
+        },
+      ],
+    },
+  ].filter(Boolean);
+
+  await axios.post(env.SLACK_WEBHOOK_URL, { blocks }, { timeout: 10_000 });
+
+  return { sent: true };
+}
+
+// ─── Generic simulation ───────────────────────────────────────────────────────
+
+async function simulateAction(actionType, incidentId, inputData) {
+  logger.info(`[Automation] Simulating ${actionType} for ${incidentId}`);
+  await new Promise(r => setTimeout(r, 300));
+  return { simulated: true, action: actionType, note: 'No integration configured for this action type' };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function safeParseArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try { return JSON.parse(value); } catch { return []; }
 }
 
 module.exports = { triggerAction };

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, Brain, CheckCircle, RefreshCw,
-  Layers, Clock, Hash, Server,
+  Layers, Clock, Hash, Server, Zap, Play,
 } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
 import { api } from '@/lib/api';
@@ -29,7 +29,7 @@ interface Detail {
   actions:  AutomationAction[];
 }
 
-type Tab = 'rca' | 'logs';
+type Tab = 'rca' | 'logs' | 'actions';
 
 interface AutomationSuggestion {
   action: string;
@@ -44,11 +44,12 @@ export default function IncidentDetailPage({ params }: { params: { id: string } 
   const router  = useRouter();
   const { socket } = useSocket();
 
-  const [data,       setData]       = useState<Detail | null>(null);
-  const [loading,    setLoading]    = useState(true);
-  const [tab,        setTab]        = useState<Tab>('rca');
-  const [resolving,  setResolving]  = useState(false);
+  const [data,        setData]        = useState<Detail | null>(null);
+  const [loading,     setLoading]     = useState(true);
+  const [tab,         setTab]         = useState<Tab>('rca');
+  const [resolving,   setResolving]   = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [triggering,  setTriggering]  = useState<string | null>(null);
 
   // ─── Initial load ───────────────────────────────────────────────────────────
 
@@ -75,11 +76,26 @@ export default function IncidentDetailPage({ params }: { params: { id: string } 
       setData(prev => prev ? { ...prev, incident: { ...prev.incident, ...u } as Incident } : null);
     };
 
+    const onAutomation = (ev: { incident_id: string; action: AutomationAction }) => {
+      if (ev.incident_id !== id) return;
+      setData(prev => {
+        if (!prev) return null;
+        const exists = prev.actions.some(a => a.action_id === ev.action.action_id);
+        const actions = exists
+          ? prev.actions.map(a => a.action_id === ev.action.action_id ? ev.action : a)
+          : [ev.action, ...prev.actions];
+        return { ...prev, actions };
+      });
+      setTriggering(null);
+    };
+
     socket.on('rca_complete',    onRca);
     socket.on('incident_update', onUpdate);
+    socket.on('automation_done', onAutomation);
     return () => {
       socket.off('rca_complete',    onRca);
       socket.off('incident_update', onUpdate);
+      socket.off('automation_done', onAutomation);
     };
   }, [socket, id]);
 
@@ -99,6 +115,12 @@ export default function IncidentDetailPage({ params }: { params: { id: string } 
     setReanalyzing(true);
     await api.reanalyze(id).catch(() => setReanalyzing(false));
     // rca_complete socket event will update state
+  };
+
+  const handleRunAutomation = async (actionType: string) => {
+    setTriggering(actionType);
+    await api.triggerAutomation(id, actionType).catch(() => setTriggering(null));
+    // automation_done socket event will update state
   };
 
   // ─── Loading / error states ─────────────────────────────────────────────────
@@ -122,7 +144,7 @@ export default function IncidentDetailPage({ params }: { params: { id: string } 
     );
   }
 
-  const { incident, rca, logs } = data;
+  const { incident, rca, logs, actions } = data;
   const services        = safeParseJSON<string[]>(incident.affected_services, []);
   const remSteps        = safeParseJSON<string[]>(rca?.remediation_steps ?? null, []);
   const autoSuggestions = safeParseJSON<AutomationSuggestion[]>(rca?.automation_suggestions ?? null, []);
@@ -205,8 +227,9 @@ export default function IncidentDetailPage({ params }: { params: { id: string } 
         {/* Tab bar */}
         <div className="flex border-b border-[#1f2937]">
           {([
-            { key: 'rca',  label: 'AI Root Cause Analysis', icon: Brain,  badge: rca ? `${Math.round(rca.confidence_score * 100)}%` : null },
-            { key: 'logs', label: 'Correlated Logs',         icon: Layers, badge: `${logs.length}` },
+            { key: 'rca',     label: 'AI Root Cause Analysis', icon: Brain,  badge: rca ? `${Math.round(rca.confidence_score * 100)}%` : null },
+            { key: 'logs',    label: 'Correlated Logs',         icon: Layers, badge: `${logs.length}` },
+            { key: 'actions', label: 'Automation',              icon: Zap,    badge: actions.length > 0 ? `${actions.length}` : null },
           ] as const).map(({ key, label, icon: Icon, badge }) => (
             <button
               key={key}
@@ -323,25 +346,114 @@ export default function IncidentDetailPage({ params }: { params: { id: string } 
                   <div className="card p-5">
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-4">Automation Suggestions</p>
                     <div className="space-y-2">
-                      {autoSuggestions.map((s, i) => (
-                        <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-black/20 border border-[#1f2937]">
-                          <span className={`badge shrink-0 text-[10px] mt-0.5 ${
-                            s.priority === 'HIGH'   ? 'bg-red-500/15    text-red-400    border-red-500/20' :
-                            s.priority === 'MEDIUM' ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20' :
-                                                      'bg-green-500/15  text-green-400  border-green-500/20'
-                          } border`}>
-                            {s.priority}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="text-xs font-mono text-indigo-300">{s.action}</p>
-                            <p className="text-xs text-slate-400 mt-0.5 leading-snug">{s.description}</p>
+                      {autoSuggestions.map((s, i) => {
+                        const isRunning = triggering === s.action;
+                        const alreadyRan = actions.some(a => a.action_type === s.action);
+                        return (
+                          <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-black/20 border border-[#1f2937]">
+                            <span className={`badge shrink-0 text-[10px] mt-0.5 border ${
+                              s.priority === 'HIGH'   ? 'bg-red-500/15    text-red-400    border-red-500/20' :
+                              s.priority === 'MEDIUM' ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20' :
+                                                        'bg-green-500/15  text-green-400  border-green-500/20'
+                            }`}>
+                              {s.priority}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-mono text-indigo-300">{s.action}</p>
+                              <p className="text-xs text-slate-400 mt-0.5 leading-snug">{s.description}</p>
+                            </div>
+                            <button
+                              onClick={() => handleRunAutomation(s.action)}
+                              disabled={isRunning || incident.status === 'RESOLVED'}
+                              className={`shrink-0 flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors disabled:opacity-40 ${
+                                alreadyRan
+                                  ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                                  : 'bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/40 border border-indigo-500/20'
+                              }`}
+                            >
+                              {isRunning
+                                ? <><RefreshCw className="w-3 h-3 animate-spin" /> Running</>
+                                : alreadyRan
+                                  ? <><CheckCircle className="w-3 h-3" /> Ran</>
+                                  : <><Play className="w-3 h-3" /> Run</>
+                              }
+                            </button>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
               </>
+            )}
+          </div>
+        )}
+
+        {/* ── Actions tab ──────────────────────────────────────────────────── */}
+        {tab === 'actions' && (
+          <div className="space-y-3 animate-fade-in">
+            {actions.length === 0 ? (
+              <div className="card p-12 flex flex-col items-center text-center gap-3">
+                <Zap className="w-10 h-10 text-slate-700" />
+                <p className="text-slate-400 text-sm">No automation actions yet</p>
+                <p className="text-slate-600 text-xs">HIGH-priority suggestions trigger automatically after RCA completes.</p>
+              </div>
+            ) : (
+              actions.map(action => {
+                const result = safeParseJSON<Record<string, unknown>>(action.result_data, {});
+                return (
+                  <div key={action.action_id} className="card p-4 flex items-start gap-4">
+                    <div className={`mt-0.5 shrink-0 w-2 h-2 rounded-full ${
+                      action.status === 'SUCCESS' ? 'bg-green-400' :
+                      action.status === 'FAILED'  ? 'bg-red-400' :
+                                                    'bg-yellow-400 animate-pulse'
+                    }`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs text-indigo-300">{action.action_type}</span>
+                        <span className={`badge text-[10px] border ${
+                          action.status === 'SUCCESS' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                          action.status === 'FAILED'  ? 'bg-red-500/10   text-red-400   border-red-500/20'  :
+                                                        'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                        }`}>
+                          {action.status}
+                        </span>
+                        <span className="text-[10px] text-slate-600 ml-auto shrink-0">{timeAgo(action.created_at)}</span>
+                      </div>
+
+                      {action.status === 'SUCCESS' && !!result.issue_url && (
+                        <a
+                          href={String(result.issue_url)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-indigo-400 hover:text-indigo-300 mt-1 block truncate"
+                        >
+                          {String(result.issue_url)}
+                        </a>
+                      )}
+                      {action.status === 'SUCCESS' && !!result.simulated && (
+                        <p className="text-xs text-slate-500 mt-1">{result.note ? String(result.note) : 'Simulated — no integration configured'}</p>
+                      )}
+                      {action.status === 'SUCCESS' && !!result.sent && (
+                        <p className="text-xs text-green-500/70 mt-1">Slack message sent successfully</p>
+                      )}
+                      {action.status === 'FAILED' && action.error_message && (
+                        <p className="text-xs text-red-400/70 mt-1 font-mono">{action.error_message}</p>
+                      )}
+                    </div>
+
+                    {action.status === 'FAILED' && (
+                      <button
+                        onClick={() => handleRunAutomation(action.action_type)}
+                        disabled={triggering === action.action_type}
+                        className="shrink-0 text-xs text-slate-400 hover:text-slate-200 btn-ghost px-2 py-1"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         )}

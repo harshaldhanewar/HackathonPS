@@ -219,6 +219,16 @@ async function _runRCA(incident, logs, io) {
     // Seed RAG memory so future incidents benefit from this analysis
     await seedMemory(incident, rca);
 
+    // Auto-trigger HIGH-priority automation suggestions (fire-and-forget)
+    const highPriority = rca.automation_suggestions.filter(s => s.priority === 'HIGH');
+    if (highPriority.length > 0) {
+      const { triggerAction } = require('./automationService');
+      for (const suggestion of highPriority) {
+        triggerAction(incident.incident_id, suggestion.action, { description: suggestion.description }, io)
+          .catch(err => logger.warn(`[Automation] Auto-trigger failed: ${err.message}`));
+      }
+    }
+
     // Push rca_complete event to all connected dashboard clients
     if (io) {
       io.emit('rca_complete', {

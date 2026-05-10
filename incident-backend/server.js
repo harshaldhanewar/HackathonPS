@@ -56,7 +56,7 @@ async function main() {
   app.use('/api/logs',       require('./src/routes/logs'));
   app.use('/api/incidents',  require('./src/routes/incidents')(io));
   app.use('/api/rca',        require('./src/routes/rca'));
-  app.use('/api/automation', require('./src/routes/automation'));
+  app.use('/api/automation', require('./src/routes/automation')(io));
 
   // ─── 5. WebSocket ───────────────────────────────────────────────────────────
   require('./src/socket/socketHandler')(io);
