@@ -11,17 +11,19 @@ const router = express.Router();
 router.delete('/reset', async (req, res) => {
   try {
 
-    // Remove all table data
+    // Delete child tables first (foreign keys reference incidents)
+    await db.run('DELETE FROM automation_actions');
+    await db.run('DELETE FROM rca_reports');
     await db.run('DELETE FROM incidents');
     await db.run('DELETE FROM logs');
-    await db.run('DELETE FROM rca_reports');
-    await db.run('DELETE FROM automation_actions');
+    await db.run('DELETE FROM rag_memory');
 
     // Reset SQLite auto increment counters
+    await db.run("DELETE FROM sqlite_sequence WHERE name='automation_actions'");
+    await db.run("DELETE FROM sqlite_sequence WHERE name='rca_reports'");
     await db.run("DELETE FROM sqlite_sequence WHERE name='incidents'");
     await db.run("DELETE FROM sqlite_sequence WHERE name='logs'");
-    await db.run("DELETE FROM sqlite_sequence WHERE name='rca_reports'");
-    await db.run("DELETE FROM sqlite_sequence WHERE name='automation_actions'");
+    await db.run("DELETE FROM sqlite_sequence WHERE name='rag_memory'");
 
     // Emit live dashboard reset
     io.emit('stats_update', {
