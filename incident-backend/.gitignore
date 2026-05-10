@@ -5,4 +5,7 @@ data/*.db-shm
 data/*.db-wal
 *.log
 
+.env.local
+.env.production
+
 
