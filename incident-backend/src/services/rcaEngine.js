@@ -28,7 +28,7 @@ function getClient() {
 
 // Serial queue — one RCA at a time with a gap between calls to respect rate limits
 let _queueTail = Promise.resolve();
-const RCA_MIN_GAP_MS = 3000;
+const RCA_MIN_GAP_MS = 500;
 
 function enqueue(fn) {
   _queueTail = _queueTail.then(async () => {
@@ -116,9 +116,9 @@ async function _runRCA(incident, logs, io) {
     // Call Claude with adaptive thinking + cached system prompt
     const client = getClient();
     const stream = client.messages.stream({
-      model:      'claude-opus-4-7',
+      model:      'claude-sonnet-4-20250514',
       max_tokens: 8192,
-      thinking:   { type: 'adaptive' },
+     // thinking:   { type: 'adaptive' },
       system: [
         {
           type:          'text',
@@ -141,7 +141,8 @@ async function _runRCA(incident, logs, io) {
         logger.warn(`[RCA] Rate limited — retrying in ${retryAfter / 1000}s`);
         await new Promise(r => setTimeout(r, retryAfter));
         const retryStream = getClient().messages.stream({
-          model: 'claude-opus-4-7', max_tokens: 8192, thinking: { type: 'adaptive' },
+          model: 'claude-sonnet-4-20250514', max_tokens: 2000, 
+          //thinking: { type: 'adaptive' },
           system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
           messages: [{ role: 'user', content: userPrompt }],
         });
