@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Activity, ChevronRight, RefreshCw } from 'lucide-react';
+import { Activity, ChevronRight, RefreshCw, Search, X } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
 import { api } from '@/lib/api';
 import {
@@ -31,6 +31,7 @@ export default function DashboardPage() {
   const [severity, setSeverity] = useState<SeverityFilter>('ALL');
   const [status,   setStatus]   = useState<StatusFilter>('OPEN');
   const [lastAt,   setLastAt]   = useState(new Date());
+  const [search,   setSearch]   = useState('');
 
   // ─── Data loading ───────────────────────────────────────────────────────────
 
@@ -108,6 +109,15 @@ export default function DashboardPage() {
   const SEVERITIES: SeverityFilter[] = ['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
   const STATUSES:   StatusFilter[]   = ['ALL', 'OPEN', 'ANALYZING', 'RESOLVED'];
 
+  const query = search.trim().toLowerCase();
+  const visible = query
+    ? incidents.filter(i =>
+        i.incident_id.toLowerCase().includes(query) ||
+        i.title?.toLowerCase().includes(query) ||
+        i.type?.toLowerCase().includes(query)
+      )
+    : incidents;
+
   const statCards = [
     { label: 'Total',     value: stats.total,    color: 'text-slate-100' },
     { label: 'Open',      value: stats.open,     color: 'text-blue-400' },
@@ -176,7 +186,30 @@ export default function DashboardPage() {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-xs text-slate-500 shrink-0">{incidents.length} shown</span>
+
+        {/* Search box */}
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by ID, type or title…"
+              className="bg-[#0d1117] border border-[#1f2937] rounded text-xs text-slate-200 placeholder-slate-600
+                         pl-8 pr-7 py-1.5 w-64 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <span className="text-xs text-slate-500 shrink-0">{visible.length} shown</span>
+        </div>
       </div>
 
       {/* Table */}
@@ -186,10 +219,17 @@ export default function DashboardPage() {
             <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
             Loading incidents…
           </div>
-        ) : incidents.length === 0 ? (
+        ) : visible.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-slate-500 gap-3">
             <Activity className="w-8 h-8 opacity-30" />
-            <p className="text-sm">No incidents match the current filters</p>
+            <p className="text-sm">
+              {query ? `No incidents match "${search}"` : 'No incidents match the current filters'}
+            </p>
+            {query && (
+              <button onClick={() => setSearch('')} className="text-xs text-indigo-400 hover:text-indigo-300">
+                Clear search
+              </button>
+            )}
           </div>
         ) : (
           <div className="card overflow-hidden">
@@ -204,7 +244,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1f2937]">
-                {incidents.map(inc => (
+                {visible.map(inc => (
                   <IncidentRow key={inc.incident_id} inc={inc} onClick={() => router.push(`/dashboard/incidents/${inc.incident_id}`)} />
                 ))}
               </tbody>

@@ -4,6 +4,47 @@ const db      = require('../config/database');
 module.exports = function createIncidentRouter(io) {
 const router = express.Router();
 
+
+
+
+// DELETE /api/incidents/reset
+router.delete('/reset', async (req, res) => {
+  try {
+
+    // Remove all table data
+    await db.run('DELETE FROM incidents');
+    await db.run('DELETE FROM logs');
+    await db.run('DELETE FROM rca_reports');
+    await db.run('DELETE FROM automation_actions');
+
+    // Reset SQLite auto increment counters
+    await db.run("DELETE FROM sqlite_sequence WHERE name='incidents'");
+    await db.run("DELETE FROM sqlite_sequence WHERE name='logs'");
+    await db.run("DELETE FROM sqlite_sequence WHERE name='rca_reports'");
+    await db.run("DELETE FROM sqlite_sequence WHERE name='automation_actions'");
+
+    // Emit live dashboard reset
+    io.emit('stats_update', {
+      total: 0,
+      open: 0,
+      critical: 0,
+      resolved: 0,
+      analyzing: 0,
+    });
+
+    res.json({
+      success: true,
+      message: 'All table data cleared successfully'
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 // GET /api/incidents
 router.get('/', async (req, res) => {
   try {
@@ -19,17 +60,23 @@ router.get('/', async (req, res) => {
     args.push(parseInt(limit));
 
     const incidents = await db.all(sql, args);
+    if (incidents.length === 0) return res.json({ incidents: [], total: 0 });
 
-    // Attach the latest RCA to each incident
-    const enriched = await Promise.all(
-      incidents.map(async (inc) => {
-        const rca = await db.get(
-          'SELECT * FROM rca_reports WHERE incident_id = ? ORDER BY generated_at DESC LIMIT 1',
-          [inc.incident_id]
-        );
-        return { ...inc, rca: rca || null };
-      })
+    // Single bulk query for latest RCA per incident — avoids N+1
+    const ids          = incidents.map(i => i.incident_id);
+    const placeholders = ids.map(() => '?').join(',');
+    const rcas         = await db.all(
+      `SELECT r.* FROM rca_reports r
+       INNER JOIN (
+         SELECT incident_id, MAX(generated_at) AS max_gen
+         FROM rca_reports WHERE incident_id IN (${placeholders})
+         GROUP BY incident_id
+       ) latest ON r.incident_id = latest.incident_id
+              AND r.generated_at = latest.max_gen`,
+      ids
     );
+    const rcaMap  = Object.fromEntries(rcas.map(r => [r.incident_id, r]));
+    const enriched = incidents.map(inc => ({ ...inc, rca: rcaMap[inc.incident_id] || null }));
 
     res.json({ incidents: enriched, total: enriched.length });
   } catch (err) {
@@ -40,20 +87,21 @@ router.get('/', async (req, res) => {
 // GET /api/incidents/stats
 router.get('/stats', async (req, res) => {
   try {
-    const [total, open, critical, resolved, analyzing] = await Promise.all([
-      db.get("SELECT COUNT(*) as c FROM incidents"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE status = 'OPEN'"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE severity = 'CRITICAL'"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE status = 'RESOLVED'"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE status = 'ANALYZING'"),
-    ]);
-
+    const row = await db.get(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status   = 'OPEN'      THEN 1 ELSE 0 END) AS open,
+        SUM(CASE WHEN severity = 'CRITICAL'  THEN 1 ELSE 0 END) AS critical,
+        SUM(CASE WHEN status   = 'RESOLVED'  THEN 1 ELSE 0 END) AS resolved,
+        SUM(CASE WHEN status   = 'ANALYZING' THEN 1 ELSE 0 END) AS analyzing
+      FROM incidents
+    `);
     res.json({
-      total:     Number(total?.c ?? 0),
-      open:      Number(open?.c ?? 0),
-      critical:  Number(critical?.c ?? 0),
-      resolved:  Number(resolved?.c ?? 0),
-      analyzing: Number(analyzing?.c ?? 0),
+      total:     Number(row?.total     ?? 0),
+      open:      Number(row?.open      ?? 0),
+      critical:  Number(row?.critical  ?? 0),
+      resolved:  Number(row?.resolved  ?? 0),
+      analyzing: Number(row?.analyzing ?? 0),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -75,7 +123,7 @@ router.get('/:id', async (req, res) => {
         [req.params.id]
       ),
       db.all(
-        'SELECT * FROM logs WHERE trace_id = ? ORDER BY timestamp ASC',
+        'SELECT * FROM logs WHERE trace_id = ? ORDER BY timestamp ASC LIMIT 100',
         [incident.trace_id || '']
       ),
       db.all(
