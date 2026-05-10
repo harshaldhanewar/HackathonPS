@@ -24,5 +24,4 @@ HELP.md
 .DS_Store
 incident-dashboard/node_modules/
 incident-backend/node_modules/
-incident-dashboard/.next/static/
-incident-dashboard/.next/cache/
+/incident-dashboard/.next/

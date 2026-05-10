@@ -11,7 +11,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
 const client = axios.create({
   baseURL: `${BASE_URL}/api`,
-  timeout: 10_000,
+  timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 });
 

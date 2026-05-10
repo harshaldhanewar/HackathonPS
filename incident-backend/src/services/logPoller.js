@@ -52,32 +52,23 @@ async function pollLogs(io) {
 
     logger.debug(`[Poller] Fetched ${rawLogs.length} total logs from backend`);
 
-    // Normalize + insert — collect only the ones that are brand-new
+    // Normalize all logs first, then batch-insert in one transaction
+    const normalized = rawLogs.map(normalizeLog);
+    const stmts = normalized.map(log => ({
+      sql: `INSERT OR IGNORE INTO logs
+              (log_id, timestamp, trace_id, service, level, error_type, message, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [log.log_id, log.timestamp, log.trace_id, log.service,
+             log.level, log.error_type, log.message, log.raw_json],
+    }));
+
+    const results = await db.client.batch(stmts, 'write');
+
     const newLogs = [];
-
-    for (const raw of rawLogs) {
-      const log = normalizeLog(raw);
-
-      const result = await db.run(
-        `INSERT OR IGNORE INTO logs
-           (log_id, timestamp, trace_id, service, level, error_type, message, raw_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          log.log_id,
-          log.timestamp,
-          log.trace_id,
-          log.service,
-          log.level,
-          log.error_type,
-          log.message,
-          log.raw_json,
-        ]
-      );
-
-      // rowsAffected === 0 means the row already existed (ignored)
-      if (Number(result.rowsAffected) > 0) {
-        newLogs.push(log);
-        io.emit('new_log', log);
+    for (let i = 0; i < normalized.length; i++) {
+      if (Number(results[i].rowsAffected) > 0) {
+        newLogs.push(normalized[i]);
+        io.emit('new_log', normalized[i]);
       }
     }
 
@@ -142,20 +133,21 @@ function normalizeLog(raw) {
 
 async function emitStats(io) {
   try {
-    const [total, open, critical, resolved, analyzing] = await Promise.all([
-      db.get("SELECT COUNT(*) as c FROM incidents"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE status = 'OPEN'"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE severity = 'CRITICAL'"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE status = 'RESOLVED'"),
-      db.get("SELECT COUNT(*) as c FROM incidents WHERE status = 'ANALYZING'"),
-    ]);
-
+    const row = await db.get(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status   = 'OPEN'      THEN 1 ELSE 0 END) AS open,
+        SUM(CASE WHEN severity = 'CRITICAL'  THEN 1 ELSE 0 END) AS critical,
+        SUM(CASE WHEN status   = 'RESOLVED'  THEN 1 ELSE 0 END) AS resolved,
+        SUM(CASE WHEN status   = 'ANALYZING' THEN 1 ELSE 0 END) AS analyzing
+      FROM incidents
+    `);
     io.emit('stats_update', {
-      total:     Number(total?.c     ?? 0),
-      open:      Number(open?.c      ?? 0),
-      critical:  Number(critical?.c  ?? 0),
-      resolved:  Number(resolved?.c  ?? 0),
-      analyzing: Number(analyzing?.c ?? 0),
+      total:     Number(row?.total     ?? 0),
+      open:      Number(row?.open      ?? 0),
+      critical:  Number(row?.critical  ?? 0),
+      resolved:  Number(row?.resolved  ?? 0),
+      analyzing: Number(row?.analyzing ?? 0),
     });
   } catch (err) {
     logger.error('[Poller] emitStats failed:', err.message);

@@ -38,6 +38,22 @@ function enqueue(fn) {
   return _queueTail;
 }
 
+async function callWithRetry(buildStream, maxRetries = 4) {
+  let delay = 15000;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await buildStream().finalMessage();
+    } catch (e) {
+      if (e.status !== 429 || attempt === maxRetries) throw e;
+      const retryAfter = parseInt(e.headers?.['retry-after'] || '0', 10);
+      const wait = retryAfter > 0 ? retryAfter * 1000 : delay;
+      logger.warn(`[RCA] Rate limited — retrying in ${wait / 1000}s (attempt ${attempt + 1}/${maxRetries})`);
+      await new Promise(r => setTimeout(r, wait));
+      delay = Math.min(delay * 2, 120000);
+    }
+  }
+}
+
 // ─── Cached system prompt ─────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are an expert Site Reliability Engineer (SRE) specialising in distributed microservice systems. You analyse production incidents and produce precise, actionable root cause analysis reports.
@@ -113,11 +129,11 @@ async function _runRCA(incident, logs, io) {
     // Build user message
     const userPrompt = buildUserPrompt(incident, logs, similarIncidents);
 
-    // Call Claude with adaptive thinking + cached system prompt
+    // Call Claude with cached system prompt (Sonnet 4.6 — higher rate limits than Opus)
     const client = getClient();
     const stream = client.messages.stream({
       model:      'claude-sonnet-4-20250514',
-      max_tokens: 8192,
+      max_tokens: 2000,
      // thinking:   { type: 'adaptive' },
       system: [
         {
@@ -161,6 +177,10 @@ async function _runRCA(incident, logs, io) {
       `cache_write=${message.usage?.cache_creation_input_tokens ?? 0}`
     );
 
+    if (message.stop_reason === 'max_tokens') {
+      throw new Error(`Response truncated at max_tokens (${message.usage?.output_tokens}) — increase max_tokens`);
+    }
+
     // Parse structured JSON from the text block
     const rca = extractAndParseRCA(message);
 
@@ -186,7 +206,7 @@ async function _runRCA(incident, logs, io) {
           }))
         ),
         rca.confidence_score,
-        'claude-opus-4-7',
+        'claude-sonnet-4-6',
         JSON.stringify({
           input_tokens:        message.usage?.input_tokens,
           output_tokens:       message.usage?.output_tokens,
