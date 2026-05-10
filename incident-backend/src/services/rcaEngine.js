@@ -82,7 +82,7 @@ CRITICAL: Respond with ONLY a single valid JSON object. No preamble. No markdown
   ],
   "automation_suggestions": [
     {
-      "action": "string — uppercase identifier e.g. CREATE_GITHUB_ISSUE",
+      "action": "string — MUST be one of the integrated actions below, or a custom identifier",
       "priority": "HIGH | MEDIUM | LOW",
       "description": "string — what this automates and why it helps"
     }
@@ -95,7 +95,10 @@ CRITICAL: Respond with ONLY a single valid JSON object. No preamble. No markdown
 Rules:
 - confidence_score: float 0.0–1.0
 - remediation_steps: minimum 3 items
-- automation_suggestions: minimum 1 item`;
+- automation_suggestions: minimum 2 items, first two MUST use these exact action identifiers:
+  1. "SEND_SLACK_ALERT" — for any alert/notification/on-call action
+  2. "CREATE_GITHUB_ISSUE" — for any issue/ticket/tracking action
+  Additional suggestions may use custom identifiers for other automation types.`;
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 

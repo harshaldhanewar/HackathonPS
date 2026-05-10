@@ -76,12 +76,14 @@ async function triggerAction(incidentId, actionType, inputData = {}, io = null) 
 
 function dispatch(actionType, incidentId, inputData) {
   const t = actionType.toUpperCase();
-  if (t === 'CREATE_GITHUB_ISSUE' || t === 'GITHUB_ISSUE') {
-    return createGitHubIssue(incidentId, inputData);
-  }
-  if (t === 'SEND_SLACK_ALERT' || t === 'SLACK_ALERT') {
-    return sendSlackAlert(incidentId, inputData);
-  }
+
+  const isGitHub = t.includes('GITHUB') || t.includes('ISSUE') || t.includes('TICKET');
+  const isSlack  = t.includes('SLACK') || t.includes('NOTIFY') || t.includes('NOTIFICATION')
+                || t.includes('PAGERDUTY') || t.includes('ONCALL') || t.includes('ON_CALL')
+                || t === 'SEND_ALERT' || t === 'ALERT_TEAM';
+
+  if (isGitHub) return createGitHubIssue(incidentId, inputData);
+  if (isSlack)  return sendSlackAlert(incidentId, inputData);
   return simulateAction(actionType, incidentId, inputData);
 }
 
